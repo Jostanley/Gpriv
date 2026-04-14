@@ -8,8 +8,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-app.get('/', (req,res)=>{
+app.get('/', (req, res)=>{
   console.log("back end working")
+  res.status(200).send("back end working")
 })
 // =========================
 // GET POSTS (ALL IN ONE)
