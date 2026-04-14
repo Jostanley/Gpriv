@@ -8,9 +8,13 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+app.get('/', (req,res)=>{
+  console.log("back end working")
+})
 // =========================
 // GET POSTS (ALL IN ONE)
 // =========================
+
 app.get("/posts", async (req, res) => {
   try {
     const { data, error } = await supabase
