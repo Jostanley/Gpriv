@@ -2,45 +2,26 @@ require("dotenv").config()
 const express = require("express");
 const cors = require("cors");
 const supabase = require("./supabase.js");
+const multer = require("multer");
 const xss = require("xss");
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+const upload = multer({ storage: multer.memoryStorage() });
 
 app.get('/', (req, res)=>{
   console.log("back end working")
   res.status(200).send("back end working")
 })
-// =========================
-// GET POSTS (ALL IN ONE)
-// =========================
 
-app.get("/posts", async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from("posts")
-      .select(`
-        *,
-        comments (
-          *,
-          replies (*)
-        )
-      `)
-      .order("created_at", { ascending: false });
 
-    if (error) throw error;
-
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: "Failed" });
-  }
-});
-
-// =========================
-// CREATE POST
-// =========================
-app.post("/posts", async (req, res) => {
+/**
+ * ======================
+ * CREATE POST (UPLOAD + SAVE)
+ * ======================
+ */
+app.post("/posts", upload.single("file"), async (req, res) => {
   try {
     let { title, content } = req.body;
 
@@ -48,22 +29,75 @@ app.post("/posts", async (req, res) => {
     content = xss(content);
 
     if (!title || !content) {
-      return res.status(400).json({ error: "Missing fields" });
+      return res.status(400).json({ error: "Title and content required" });
     }
 
+    let fileUrl = null;
+
+    // ======================
+    // 1. UPLOAD FILE (IF EXISTS)
+    // ======================
+    if (req.file) {
+      const file = req.file;
+      const fileName = `${Date.now()}-${file.originalname}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("posts")
+        .upload(fileName, file.buffer, {
+          contentType: file.mimetype
+        });
+
+      if (uploadError) throw uploadError;
+
+      const { data } = supabase.storage
+        .from("posts")
+        .getPublicUrl(fileName);
+
+      fileUrl = data.publicUrl;
+    }
+
+    // ======================
+    // 2. SAVE POST TO DATABASE
+    // ======================
     const { data, error } = await supabase
       .from("posts")
-      .insert([{ title, content,username:"Anonymous" }])
+      .insert([
+        {
+          title,
+          content,
+          file: fileUrl,
+          username: "Anonymous"
+        }
+      ])
       .select()
       .single();
 
     if (error) throw error;
 
     res.json(data);
-  } catch {
-    res.status(500).json({ error: "Error creating post" });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to create post" });
   }
 });
+
+/**
+ * ======================
+ * GET POSTS
+ * ======================
+ */
+app.get("/posts", async (req, res) => {
+  const { data, error } = await supabase
+    .from("posts")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (error) return res.status(500).json(error);
+
+  res.json(data);
+});
+
 
 // =========================
 // UPVOTE
