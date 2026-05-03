@@ -258,7 +258,7 @@ async (req, res) => {
 
     // check if already liked
     const { data: existing } = await supabase
-      .from("likes")
+      .from("reply_likes")
       .select("*")
       .eq("comment_id", replyId)
       .eq("user_id", userId)
@@ -267,7 +267,7 @@ async (req, res) => {
     if (existing) {
       // remove dislike
       await supabase
-        .from("likes")
+        .from("reply_likes")
         .delete()
         .eq("comment_id", replyId)
         .eq("user_id", userId);
@@ -276,7 +276,7 @@ async (req, res) => {
     } else {
       // add dislike
       const {data, error } = await supabase
-        .from("likes")
+        .from("reply_likes")
         .insert({
           comment_id: replyId,
           user_id: userId,
@@ -294,7 +294,7 @@ async (req, res) => {
 app.get("/replylikes", async (req, res) => {
   try {
     const { data, error } = await supabase
-      .from("likes")
+      .from("reply_likes")
       .select("*");
 
     if (error) {
@@ -318,7 +318,7 @@ app.post("/replies/:id/dislike", auth, async (req, res) => {
 
     // check if already disliked
     const { data: existing } = await supabase
-      .from("dislikes")
+      .from("reply_dislikes")
       .select("*")
       .eq("comment_id", replyId)
       .eq("user_id", userId)
@@ -327,7 +327,7 @@ app.post("/replies/:id/dislike", auth, async (req, res) => {
     if (existing) {
       // remove dislike
       await supabase
-        .from("dislikes")
+        .from("reply_dislikes")
         .delete()
         .eq("comment_id", replyId)
         .eq("user_id", userId);
@@ -336,7 +336,7 @@ app.post("/replies/:id/dislike", auth, async (req, res) => {
     } else {
       // add dislike
       const {data, error } = await supabase
-        .from("dislikes")
+        .from("reply_dislikes")
         .insert({
           comment_id: replyId,
           user_id: userId,
@@ -354,7 +354,7 @@ app.post("/replies/:id/dislike", auth, async (req, res) => {
 app.get("/replydislikes", async (req, res) => {
   try {
     const { data, error } = await supabase
-      .from("dislikes")
+      .from("reply_dislikes")
       .select("*");
 
     if (error) {
