@@ -407,5 +407,162 @@ app.get("/replies", async (req, res) => {
  res.status(200).json(data);
   
 });
+app.post("/bookmark", auth, async (req, res) => {
+  const userId = req.user.id;
+  const { post_id } = req.body;
+
+  const { data: existing } = await supabase
+    .from("bookmarks")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("post_id", post_id)
+    .maybeSingle();
+
+  if (existing) {
+    await supabase
+      .from("bookmarks")
+      .delete()
+      .eq("id", existing.id);
+
+    return res.json({ message: "removed" });
+  }
+
+  await supabase.from("bookmarks").insert({
+    user_id: userId,
+    post_id
+  });
+
+  res.json({ message: "saved" });
+});
+app.get("/bookmarks/full", auth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    // =====================
+    // 1. BOOKMARKS (SAFE)
+    // =====================
+    const { data: bookmarks, error: bErr } = await supabase
+      .from("bookmarks")
+      .select("post_id")
+      .eq("user_id", userId);
+
+    if (bErr) throw bErr;
+
+    const postIds = (bookmarks || []).map(b => b.post_id);
+
+    if (postIds.length === 0) return res.json([]);
+
+    // =====================
+    // 2. POSTS
+    // =====================
+    const { data: posts, error: pErr } = await supabase
+      .from("posts")
+      .select("*")
+      .in("id", postIds);
+
+    if (pErr) throw pErr;
+
+    // =====================
+    // 3. COMMENTS
+    // =====================
+    const { data: comments, error: cErr } = await supabase
+      .from("comments")
+      .select("*")
+      .in("post_id", postIds);
+
+    if (cErr) throw cErr;
+
+    // =====================
+    // 4. REPLIES
+    // =====================
+    const commentIds = (comments || []).map(c => c.id);
+
+    const { data: replies, error: rErr } = await supabase
+      .from("replies")
+      .select("*")
+      .in("comment_id", commentIds);
+
+    if (rErr) throw rErr;
+
+    // =====================
+    // 5. LIKES
+    // =====================
+    const { data: postLikes } = await supabase
+      .from("posts_likes")
+      .select("*")
+      .in("post_id", postIds);
+
+    const { data: replyLikes } = await supabase
+      .from("reply_likes")
+      .select("*");
+
+    const { data: replyDislikes } = await supabase
+      .from("reply_dislikes")
+      .select("*");
+
+    // =====================
+    // SAFE FALLBACKS
+    // =====================
+    const safePosts = posts || [];
+    const safeComments = comments || [];
+    const safeReplies = replies || [];
+    const safePostLikes = postLikes || [];
+    const safeReplyLikes = replyLikes || [];
+    const safeReplyDislikes = replyDislikes || [];
+
+    // =====================
+    // COMBINE DATA
+    // =====================
+    safePosts.forEach(post => {
+      post.likes = safePostLikes.filter(l => l.post_id === post.id).length;
+
+      post.comments = safeComments
+        .filter(c => c.post_id === post.id)
+        .map(c => {
+          const cReplies = safeReplies.filter(r => r.comment_id === c.id);
+
+          return {
+            ...c,
+            liked: safeReplyLikes.filter(l => l.comment_id === c.id).length,
+            disliked: safeReplyDislikes.filter(d => d.comment_id === c.id).length,
+            replies: cReplies
+          };
+        });
+    });
+
+    res.json(safePosts);
+
+  } catch (err) {
+    console.log(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete("/bookmarks/:postId", auth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { postId } = req.params;
+
+    // 1. Delete only THIS user's bookmark for this post
+    const { data, error } = await supabase
+      .from("bookmarks")
+      .delete()
+      .eq("user_id", userId)
+      .eq("post_id", postId);
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    return res.json({
+      success: true,
+      message: "Bookmark deleted successfully"
+    });
+
+  } catch (err) {
+    console.log(err);
+    res.status(500).json({ error: err.message });
+  }
+});
 const PORT = process.env.PORT || 5000
 app.listen(PORT,"0.0.0.0", () => console.log("Server running"));
