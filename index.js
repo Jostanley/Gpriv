@@ -115,6 +115,205 @@ app.get("/posts", async (req, res) => {
 });
 
 
+//==================≠=======
+//Delete post
+//=======≠=================
+app.delete("/posts/:postId", auth, async (req, res) => {
+
+  try {
+
+    const postId = req.params.postId;
+    const userId = req.user.id;
+
+    // =========================
+    // 1. FIND POST
+    // =========================
+
+    const { data: post, error: findError } = await supabase
+      .from("posts")
+      .select("*")
+      .eq("id", postId)
+      .single();
+
+    if (findError || !post) {
+
+      return res.status(404).json({
+        error: "Post not found"
+      });
+
+    }
+
+    // =========================
+    // 2. CHECK OWNER
+    // =========================
+
+    if (post.user_id !== userId) {
+
+      return res.status(403).json({
+        error: "Unauthorized"
+      });
+
+    }
+
+    // =========================
+    // 3. DELETE IMAGE FROM STORAGE
+    // =========================
+
+    if (post.file) {
+
+      try {
+
+        const fileName = post.file.split("/").pop();
+
+        await supabase.storage
+          .from("posts")
+          .remove([fileName]);
+
+      } catch (err) {
+
+        console.log("Storage delete failed");
+
+      }
+
+    }
+
+    // =========================
+    // 4. DELETE POST
+    // =========================
+
+    const { error: deleteError } = await supabase
+      .from("posts")
+      .delete()
+      .eq("id", postId);
+
+    if (deleteError) {
+
+      return res.status(500).json({
+        error: deleteError.message
+      });
+
+    }
+
+    // CASCADE handles:
+    // comments
+    // replies
+    // likes
+    // dislikes
+    // bookmarks
+
+    res.json({
+      success: true,
+      message: "Post deleted"
+    });
+
+  } catch (err) {
+
+    console.log(err);
+
+    res.status(500).json({
+      error: "Server error"
+    });
+
+  }
+
+});
+//=============
+//Edit post 
+//========
+app.get("/posts/:postId", async (req, res) => {
+
+  try {
+
+    const postId = req.params.postId;
+
+    const { data, error } = await supabase
+      .from("posts")
+      .select("*")
+      .eq("id", postId)
+      .single();
+
+    if (error || !data) {
+      return res.status(404).json({ error: "Post not found" });
+    }
+
+    res.json(data);
+
+  } catch (err) {
+    console.log(err);
+    res.status(500).json({ error: "Server error" });
+  }
+
+});
+
+// ======================
+// UPDATE POST
+// ======================
+app.put("/posts/:postId", auth, upload.single("file"), async (req, res) => {
+
+  try {
+
+    const postId = req.params.postId;
+    const { title, content } = req.body;
+
+    // check post
+    const { data: existing } = await supabase
+      .from("posts")
+      .select("*")
+      .eq("id", postId)
+      .single();
+
+    if (!existing) {
+      return res.status(404).json({ error: "Post not found" });
+    }
+
+    if (existing.user_id !== req.user.id) {
+      return res.status(403).json({ error: "Not allowed" });
+    }
+
+    let fileUrl = existing.file;
+
+    // optional new file
+    if (req.file) {
+
+      const fileName = `${Date.now()}-${req.file.originalname}`;
+
+      await supabase.storage
+        .from("posts")
+        .upload(fileName, req.file.buffer, {
+          contentType: req.file.mimetype
+        });
+
+      const { data } = supabase.storage
+        .from("posts")
+        .getPublicUrl(fileName);
+
+      fileUrl = data.publicUrl;
+    }
+
+    const { data, error } = await supabase
+      .from("posts")
+      .update({
+        title,
+        content,
+        file: fileUrl
+      })
+      .eq("id", postId)
+      .select()
+      .single();
+
+    if (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    res.json({ message: "Updated", data });
+
+  } catch (err) {
+    console.log(err);
+    res.status(500).json({ error: "Server error" });
+  }
+
+});
+
 // =========================
 // UPVOTE
 // =========================
