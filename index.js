@@ -763,5 +763,278 @@ app.delete("/bookmarks/:postId", auth, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+app.get("/feed", auth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    // ======================
+    // LOAD DATA
+    // ======================
+
+    const { data: posts } = await supabase
+      .from("posts")
+      .select("*");
+
+    const { data: likes } = await supabase
+      .from("post_likes")
+      .select("*");
+
+    const { data: comments } = await supabase
+      .from("comments")
+      .select("*");
+
+    const { data: bookmarks } = await supabase
+      .from("bookmarks")
+      .select("*");
+
+    // ======================
+    // INTERACTION MAP
+    // ======================
+
+    const interactedUsers = new Set();
+
+    for (const like of likes || []) {
+      if (like.user_id === userId) {
+        const post = posts.find(
+          p => p.id === like.post_id
+        );
+
+        if (post) {
+          interactedUsers.add(post.user_id);
+        }
+      }
+    }
+
+    for (const comment of comments || []) {
+      if (comment.user_id === userId) {
+        const post = posts.find(
+          p => p.id === comment.post_id
+        );
+
+        if (post) {
+          interactedUsers.add(post.user_id);
+        }
+      }
+    }
+
+    // ======================
+    // SCORE POSTS
+    // ======================
+
+    const scoredPosts = posts.map(post => {
+
+      const likeCount =
+        likes.filter(
+          l => l.post_id === post.id
+        ).length;
+
+      const commentCount =
+        comments.filter(
+          c => c.post_id === post.id
+        ).length;
+
+      const bookmarkCount =
+        bookmarks.filter(
+          b => b.post_id === post.id
+        ).length;
+
+      // recent post
+      const hoursOld =
+        (Date.now() -
+          new Date(post.created_at)) /
+        (1000 * 60 * 60);
+
+      const recentBonus =
+        hoursOld <= 24 ? 10 : 0;
+
+      // interacted creator
+      const interactedBefore =
+        interactedUsers.has(post.user_id);
+
+      // creator age
+      const creatorPosts =
+        posts.filter(
+          p => p.user_id === post.user_id
+        );
+
+      const oldestPost =
+        creatorPosts.sort(
+          (a, b) =>
+            new Date(a.created_at) -
+            new Date(b.created_at)
+        )[0];
+
+      const creatorAgeDays =
+        (Date.now() -
+          new Date(oldestPost.created_at)) /
+        (1000 * 60 * 60 * 24);
+
+      const isNewCreator =
+        creatorAgeDays <= 30;
+
+      let score = 0;
+
+      score += recentBonus;
+      score += likeCount * 5;
+      score += commentCount * 10;
+      score += bookmarkCount * 15;
+
+      if (interactedBefore)
+        score += 20;
+
+      if (isNewCreator)
+        score += 30;
+
+      return {
+        ...post,
+        score,
+        isNewCreator,
+        interactedBefore
+      };
+    });
+
+    // ======================
+    // SORT
+    // ======================
+
+    scoredPosts.sort(
+      (a, b) => b.score - a.score
+    );
+
+    // ======================
+    // NEW CREATORS
+    // ======================
+
+    const newCreators =
+      scoredPosts.filter(
+        p => p.isNewCreator
+      );
+
+    // ======================
+    // INTERACTED
+    // ======================
+
+    const interacted =
+      scoredPosts.filter(
+        p => p.interactedBefore
+      );
+
+    // ======================
+    // RECOMMENDED
+    // ======================
+
+    const recommended =
+      scoredPosts.filter(
+        p =>
+          !p.isNewCreator &&
+          !p.interactedBefore
+      );
+
+    // ======================
+    // BUILD FEED
+    // ======================
+
+    const feed = [
+      ...newCreators.slice(0, 10),
+      ...interacted.slice(0, 6),
+      ...recommended.slice(0, 4)
+    ];
+
+    // ======================
+    // REMOVE DUPLICATES
+    // ======================
+
+    const uniqueFeed =
+      Array.from(
+        new Map(
+          feed.map(post => [
+            post.id,
+            post
+          ])
+        ).values()
+      );
+
+    // ======================
+    // FINAL SORT
+    // ======================
+
+    uniqueFeed.sort(
+      (a, b) => b.score - a.score
+    );
+
+    res.json(uniqueFeed);
+
+  } catch (err) {
+    console.error(err);
+
+    res.status(500).json({
+      error: "Feed failed"
+    });
+  }
+});
+
+app.post("/posts/:id/promote", auth, async (req, res) => {
+  try {
+    const postId = req.params.id;
+
+    // Find post
+    const { data: post, error } = await supabase
+      .from("posts")
+      .select("*")
+      .eq("id", postId)
+      .single();
+
+    if (error || !post) {
+      return res.status(404).json({
+        error: "Post not found"
+      });
+    }
+
+    // Only owner can promote
+    if (post.user_id !== req.user.id) {
+      return res.status(403).json({
+        error: "Not allowed"
+      });
+    }
+
+    // Check existing promotion
+    const { data: existing } = await supabase
+      .from("promoted_posts")
+      .select("*")
+      .eq("post_id", postId)
+      .maybeSingle();
+
+    if (existing) {
+      return res.json({
+        message: "Already promoted"
+      });
+    }
+
+    // Create promotion
+    const { error: insertError } = await supabase
+      .from("promoted_posts")
+      .insert({
+        post_id: postId,
+        active: true
+      });
+
+    if (insertError) {
+      throw insertError;
+    }
+
+    res.json({
+      success: true,
+      message: "Post promoted"
+    });
+
+  } catch (err) {
+    console.log(err);
+
+    res.status(500).json({
+      error: "Server error"
+    });
+  }
+});
 const PORT = process.env.PORT || 5000
 app.listen(PORT,"0.0.0.0", () => console.log("Server running"));
